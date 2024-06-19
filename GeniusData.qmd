@@ -1,5 +1,5 @@
 ---
-title: "HW3"
+title: "GeniusData"
 author: "Barb Ribeiro"
 format: html
 editor: visual
@@ -7,7 +7,7 @@ editor_options:
   chunk_output_type: console
 ---
 # HW 3
-## 1. Pull the lyrics for the two artists from the Genius API using the geniusr package
+## 1. Pull the lyrics for the two artists from the Genius API
 ```{r}
 library("geniusr")
 library(tidyverse)
@@ -87,7 +87,7 @@ for (i in 1:length(actual_songs_2)) {
 ```
 
 
-## 2. Visualize a tf-idf analysis using at least 3 songs for each artist, separately, with stopwords excluded. In other words, do an analysis over 3 songs for The Cure, and a separate one for 3 songs by Beyoncé.  You don't need to directly compare The Cure and Beyoncé for this part.
+## 2. Visualize a tf-idf analysis
 ```{r}
 pvris_words <- df_lyrics %>%
   unnest_tokens(word, line) %>%
@@ -163,7 +163,7 @@ kehlani_tf_idf %>%
   labs(x = "tf-idf", y = NULL)
 ```
 
-## 3. Show (print to console/output) the top 10 bigrams from each artist (without stopwords). 
+## 3. Show the top 10 bigrams from each artist without stopwords
 ```{r}
 pvris_bigrams <- df_lyrics %>%
   unnest_tokens(bigram, line, token = "ngrams", n = 2) %>%
@@ -235,7 +235,7 @@ combined_bigrams %>%
 ```
 
 
-## 4. Use sentiment analysis to find and visualize the most common positive and negative words across all of lyrics for both artists (without stopwords). Use facet_wrap() to show positive and negative in the same plot
+## 4. Use sentiment analysis to find and visualize the most common positive and negative words across all of lyrics for both artists (without stopwords)
 ```{r}
 pvris_sentiment <- pvris_words %>%
   inner_join(get_sentiments("bing")) %>%
@@ -272,7 +272,6 @@ combined_sentiment %>%
   labs(x = "Contribution to sentiment",
        y = NULL)
 ```
-I don't think I did the visual correctly bc I was having a lot of trouble w it 
 Eventhough the two artists are in very different genres, it's interesting how many similar words are at the top of their negative and pos words. 
 
 
