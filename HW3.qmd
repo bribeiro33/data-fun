@@ -1,0 +1,308 @@
+---
+title: "HW3"
+author: "Barb Ribeiro"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+# HW 3
+## 1. Pull the lyrics for the two artists from the Genius API using the geniusr package
+```{r}
+library("geniusr")
+library(tidyverse)
+library(tidytext)
+```
+```{r}
+genius_token()
+```
+
+```{r}
+artist <- search_artist("PVRIS")
+songs <- get_artist_songs(artist$artist_id)
+```
+```{r}
+actual_songs <- songs$content
+```
+
+```{r}
+first_song <- actual_songs[[1]]
+first_song_id <- first_song$id
+typeof(actual_songs)
+```
+
+```{r}
+first_song_lyrics <- get_lyrics_id(actual_songs[[1]]$id)
+df_lyrics <- data.frame(line=character(),
+                  section_name=character(),
+                  section_artist=character(),
+                  song_name=character(),
+                  artist_name=character(),
+                  song_id=integer(),
+                  stringsAsFactors=FALSE)
+```
+```{r}
+lyrics_info_temp <- NULL
+for (i in 1:length(actual_songs)) {
+  id_temp <- actual_songs[[i]]$id
+  tryCatch(
+    {
+      lyrics_info_temp <- get_lyrics_id(song_id = id_temp)
+    },
+    error=function(e) {
+      NULL
+    }
+  )
+  df_lyrics <- bind_rows(df_lyrics, lyrics_info_temp) 
+}
+```
+2nd artist: 
+```{r}
+artist_2 <- search_artist("Kehlani")
+actual_artist <- filter(artist_2, artist_name == "Kehlani")
+songs_2 <- get_artist_songs(actual_artist$artist_id)
+actual_songs_2 <- songs_2$content
+df_lyrics2 <- data.frame(line=character(),
+                  section_name=character(),
+                  section_artist=character(),
+                  song_name=character(),
+                  artist_name=character(),
+                  song_id=integer(),
+                  stringsAsFactors=FALSE)
+```
+```{r}
+lyrics_info_temp <- NULL
+for (i in 1:length(actual_songs_2)) {
+  id_temp <- actual_songs_2[[i]]$id
+  tryCatch(
+    {
+      lyrics_info_temp <- get_lyrics_id(song_id = id_temp)
+    },
+    error=function(e) {
+      NULL
+    }
+  )
+  df_lyrics2 <- bind_rows(df_lyrics2, lyrics_info_temp) 
+}
+```
+
+
+## 2. Visualize a tf-idf analysis using at least 3 songs for each artist, separately, with stopwords excluded. In other words, do an analysis over 3 songs for The Cure, and a separate one for 3 songs by Beyoncé.  You don't need to directly compare The Cure and Beyoncé for this part.
+```{r}
+pvris_words <- df_lyrics %>%
+  unnest_tokens(word, line) %>%
+  count(song_name, word, sort = TRUE)
+```
+```{r}
+total_pvris_words <- pvris_words %>%
+  group_by(song_name) %>%
+  summarize(total = sum(n))
+```
+```{r}
+pvris_words <- left_join(pvris_words, total_pvris_words)
+```
+```{r}
+pvris_words <- pvris_words %>%
+  anti_join(stop_words)
+
+my_stopwords <- tibble(word = c("ooh", "na", "woah", "ah", "na", "1", "2", "3", "yeah", "hey", "til", "da", "la"))
+
+pvris_words <- pvris_words %>%
+  anti_join(my_stopwords)
+```
+
+```{r}
+pvris_tf_idf <- pvris_words %>%
+  filter(song_name %in% c("Death of Me", "Fire", "Old Wounds")) %>%
+  bind_tf_idf(word, song_name, n)
+```
+```{r}
+pvris_tf_idf %>%
+  group_by(song_name) %>%
+  slice_max(tf_idf, n = 15) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = song_name)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~song_name, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+Artist 2: 
+```{r}
+kehlani_words <- df_lyrics2 %>%
+  unnest_tokens(word, line) %>%
+  count(song_name, word, sort = TRUE)
+
+total_kehlani_words <- kehlani_words %>%
+  group_by(song_name) %>%
+  summarize(total = sum(n))
+
+kehlani_words <- left_join(kehlani_words, total_kehlani_words)
+
+kehlani_words <- kehlani_words %>%
+  anti_join(stop_words)
+
+my_stopwords2 <- tibble(word = c("uh", "yeah", "na", "ooh", "fuck", "ah", "la", "em", "da", "woah"))
+
+kehlani_words <- kehlani_words %>%
+  anti_join(my_stopwords2)
+
+```
+```{r}
+kehlani_tf_idf <- kehlani_words %>%
+  filter(song_name %in% c("RPG", "24/7", "I Wanna Be")) %>%
+  bind_tf_idf(word, song_name, n)
+```
+```{r}
+kehlani_tf_idf %>%
+  group_by(song_name) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = song_name)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~song_name, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+
+## 3. Show (print to console/output) the top 10 bigrams from each artist (without stopwords). 
+```{r}
+pvris_bigrams <- df_lyrics %>%
+  unnest_tokens(bigram, line, token = "ngrams", n = 2) %>%
+  filter(!is.na(bigram))
+```
+
+```{r}
+kehlani_bigrams <- df_lyrics2 %>%
+  unnest_tokens(bigram, line, token = "ngrams", n = 2) %>%
+  filter(!is.na(bigram))
+```
+
+```{r}
+pvris_no_stopwords <- pvris_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word1 %in% my_stopwords$word) %>%
+  filter(!word2 %in% my_stopwords$word) %>%
+  count(word1, word2, sort = TRUE)
+```
+
+```{r}
+kehlani_no_stopwords <- kehlani_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word1 %in% my_stopwords2$word) %>%
+  filter(!word2 %in% my_stopwords2$word) %>%
+  filter(!(word1 == word2)) %>%
+  count(word1, word2, sort = TRUE)
+```
+
+```{r}
+pvris_bigrams_united <- pvris_no_stopwords %>%
+  unite(bigram, word1, word2, sep = " ")
+```
+```{r}
+kehlani_bigrams_united <- kehlani_no_stopwords %>%
+  unite(bigram, word1, word2, sep = " ")
+```
+
+```{r}
+pvris_10 <- pvris_bigrams_united %>%
+  arrange(desc(n)) %>%
+  slice_max(n, n = 10)
+```
+```{r}
+kehlani_10 <- kehlani_bigrams_united %>%
+  arrange(desc(n)) %>%
+  slice_max(n, n = 10)
+```
+```{r}
+pvris_10 <- pvris_10 %>%
+  mutate(artist = "PVRIS")
+kehlani_10 <- kehlani_10 %>%
+  mutate(artist = "Kehlani")
+```
+```{r}
+combined_bigrams <- bind_rows(kehlani_10, pvris_10)
+```
+
+```{r}
+combined_bigrams %>%
+  ggplot(aes(n, fct_reorder(bigram, n), fill = artist)) +
+  geom_col(show.legend = FALSE)
+  facet_wrap(~artist, ncol = 2, scales = "free") +
+  labs(x = "bigram counts", y = NULL)
+```
+
+
+## 4. Use sentiment analysis to find and visualize the most common positive and negative words across all of lyrics for both artists (without stopwords). Use facet_wrap() to show positive and negative in the same plot
+```{r}
+pvris_sentiment <- pvris_words %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+```
+```{r}
+kehlani_sentiment <- kehlani_words %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+```
+```{r}
+pvris_sentiment <- pvris_sentiment %>%
+  mutate(artist = "PVRIS")
+kehlani_sentiment <- kehlani_sentiment %>%
+  mutate(artist = "Kehlani")
+```
+
+```{r}
+combined_sentiment <- bind_rows(pvris_sentiment, kehlani_sentiment)
+```
+
+
+```{r}
+combined_sentiment %>%
+  group_by(artist, sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = TRUE) +
+  facet_wrap(~artist, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+I don't think I did the visual correctly bc I was having a lot of trouble w it 
+Eventhough the two artists are in very different genres, it's interesting how many similar words are at the top of their negative and pos words. 
+
+
+## 5. Create a word cloud across all of lyrics for both artists. 
+```{r}
+library(wordcloud)
+```
+```{r}
+combined_words <- bind_rows(kehlani_words, pvris_words)
+```
+```{r}
+kehlani_counts <- subset(kehlani_words, select=c(word, n))
+pvris_counts <- subset(pvris_words, select=c(word, n))
+```
+
+```{r}
+combined_counts <- merge(kehlani_counts, pvris_counts, by = "word", all = TRUE)
+```
+```{r}
+combined_counts$n <- ifelse(is.na(combined_counts$n.x), combined_counts$n.y,
+                        ifelse(is.na(combined_counts$n.y),combined_counts$n.x,
+                        combined_counts$n.x + combined_counts$n.y))
+```
+```{r}
+combined_counts <- aggregate(n ~ word, data = combined_counts, FUN = sum)
+```
+
+
+```{r}
+combined_counts %>%
+  with(wordcloud(word, n, max.words = 100))
+```
+
