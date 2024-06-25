@@ -20,9 +20,9 @@ library(tidyverse)
 
 Create dataframes from the three rds files in the data folder. 
 ```{r}
-df_compq <- read_rds(here("homework-5-bribeiro33/data", "df_compq.rds"))
-df_demo <- read_rds(here("homework-5-bribeiro33/data", "df_demo.rds"))
-df_sprt <- read_rds(here("homework-5-bribeiro33/data", "df_sprt.rds"))
+df_compq <- read_rds(here("data", "df_compq.rds"))
+df_demo <- read_rds(here("data", "df_demo.rds"))
+df_sprt <- read_rds(here("data", "df_sprt.rds"))
 ```
 
 # Examples of sample stimuli
