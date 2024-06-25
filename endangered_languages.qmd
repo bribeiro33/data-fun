@@ -1,0 +1,244 @@
+---
+title: "ribeiro_hp1"
+author: "Barb Ribeiro"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## 1. Setup
+```{R}
+library(tidyverse)
+df_lang <- read.csv("data.csv")
+```
+
+## 2. Simpler dfs, cleaning
+```{R}
+df_english <- df_lang %>%
+  select(ID, Name.in.English, Countries, Degree.of.endangerment, Number.of.speakers, Latitude, Longitude )
+names(df_english) <- tolower(names(df_english))
+colnames(df_english)[5] = "num.speakers"
+class(df_english$num.speakers)
+df_na <- df_english[!complete.cases(df_english), ]
+```
+1. Made a smaller dataframe w/o extraneous details
+2. Changed all the colnames to lowercase
+3. Changed "number.of.speakers" col name bc it was unecessarily long
+4. Checked "num.speakers" type --> int
+3. There are quite a few rows with missing values, need to keep in mind when summarizing or mapping. Now to check what the ranges are for degree of endangerment
+
+## 3. Understanding the data
+```{R}
+df_endangerment_range <- df_english %>%
+  na.omit() %>%
+  group_by(degree.of.endangerment) %>%
+  summarise(min_speakers = min(num.speakers),
+            max_speakers = max(num.speakers),
+            range_speakers = max_speakers - min_speakers)
+```
+- Doesn't seem to be terribly consistent. According to the blog post languages with 0 speakers should count as extinct?
+- Also I chose not to remove the rows with NAs because they were usually only missing one (from the ones remaining in df_english) and they could still be useful if not using that column with missing information in other analyses
+```{R}
+bins = c(0, 10, 100, 1000, 10000, 100000, Inf)
+df_endangerment_bins <- df_english %>%
+  mutate(speaker_range = cut(num.speakers, breaks = bins, labels = c("0-10", "11-100", "101-1000", "1001-10000", "10001-100000", "100001+")))
+
+df_endangerment_range_count <- df_endangerment_bins %>%
+  na.omit() %>%
+  group_by(degree.of.endangerment, speaker_range) %>%
+  count()
+```
+- New df splitting speakers in lang counts into ranges by powers of 10
+```{R}
+df_wide_range <- df_endangerment_range_count %>%
+  pivot_wider(
+    names_from = degree.of.endangerment, values_from = n
+  )
+```
+- Making it a little more readable by making it wider
+- Columns 2-end are the labels for each langauge's endangerment so the values are the number of language with that many speakers in that endangerment category
+```{R}
+ggplot(
+  data = df_endangerment_range_count,
+  mapping = aes(x = degree.of.endangerment, y = n, fill = speaker_range)
+) + 
+geom_bar(stat = "identity") + 
+labs(x = "Degree of Endangerment", y = "Number of Languages") +
+scale_fill_brewer(palette = "Greens")
+```
+- Made a stacked bar chart which took longer to figure out, but I couldn't figure out a simpler way to show the information. I also changed the colors because the default yellow was disgusting.
+- It's still not the most readable, so I'm going to sort them (and create a separate, more detailed df on the endangerment levels)
+
+```{R}
+levels <- c("Vulnerable", "Definitely endangered", "Severely endangered", "Critically endangered", "Extinct")
+descriptions <- c("most children speak the language, but it may be restricted to certain domains (e.g., home)", "children no longer learn the language as a 'mother tongue' in the home", "language is spoken by grandparents and older generations; while the parent generation may understand it, they do not speak it to children or among themselves", "the youngest speakers are grandparents and older, and they speak the language partially and infrequently", "there are no speakers left")
+df_endangerment_levels <- data.frame(
+  severity.level = 1:length(levels),
+  degree.of.endangerment = levels,
+  description = descriptions
+)
+```
+- descriptions are from the UNESCO endangerment classification, also written in the blog post
+```{R}
+df_endangerment_range_count_severity <- df_endangerment_range_count %>%
+  left_join(
+    df_endangerment_levels %>% 
+      select(-description),
+    by = "degree.of.endangerment"
+  ) %>%
+  select(severity.level, everything()) %>%
+  arrange(severity.level)
+```
+- joins only the severity.level and degree.of.endangerment to the main df and makes the severity.level the primary key
+- also arranged it to go from vulnerable to extincit
+- same graph as before, just with "newish" data
+```{R}
+ggplot(
+  data = df_endangerment_range_count_severity,
+  mapping = aes(x = severity.level, y = n, fill = speaker_range)
+) + 
+geom_bar(stat = "identity") + 
+labs(x = "Degree of Endangerment (1 Low - 5 High)", y = "Number of Languages") +
+scale_fill_brewer(palette = "Blues")
+```
+- Now we can see that even though the level ranges aren't the most consistent (probably because different populations are of different sizes and a more accurate number to use would be the proportion of the population who speaks it), as the degree of endangerment increases, the number of languages within high speaker ranges tend to decrease and the number of languages within low speaker ranges tend to increase. 
+- Now to quickly check how much of the data has a source: 
+```{R}
+df_lang$Sources <- ifelse(df_lang$Sources == "", NA, df_lang$Sources) 
+
+df_source <- df_lang %>%
+  filter(is.na(Sources))
+
+no_source_count <- nrow(df_source)
+all_lang_count <- nrow(df_lang)
+has_source_count <- all_lang_count - no_source_count
+proportion_no_source <- no_source_count / all_lang_count
+```
+- less than 1/4 don't have sources. Questionable??
+- Should've changed all empty values to NA at the start
+```{R}
+df_lang[df_lang == ""] <- NA
+```
+
+## 4. Exploring the Data
+- Number of languages by country 
+```{R}
+df_country <- df_lang %>%
+  select(ISO639.3.codes, Country.codes.alpha.3, Latitude, Longitude, Degree.of.endangerment )
+names(df_country) <- tolower(names(df_country))
+colnames(df_country)[1] = "iso3.codes"
+colnames(df_country)[2] = "un.codes"
+```
+- separate out the codes when there's more than 1 in a row
+- iso3 didn't yield a lot of success in converting to map later on so I went back and duplicated everything with un codes
+```{R}
+df_split_country <- df_country %>%
+  separate_rows(iso3.codes, sep = ",") %>%
+  mutate(iso3.codes = str_trim(iso3.codes)) %>%
+  na.omit()
+df_split_country_un <- df_country %>%
+  separate_rows(un.codes, sep = ",") %>%
+  mutate(un.codes = str_trim(un.codes)) %>%
+  na.omit()
+```
+- Some NAs, could be from extraneous "," after the last country code?
+- join severity levels
+```{R}
+df_country_severity <- df_split_country %>%
+  left_join(
+    df_endangerment_levels %>% 
+      select(-description),
+    by = "degree.of.endangerment"
+  )
+
+df_country_severity_un <- df_split_country_un %>%
+  left_join(
+    df_endangerment_levels %>% 
+      select(-description),
+    by = "degree.of.endangerment"
+  )
+```
+- Download Packages
+```{R}
+# install.packages("rworldmap")
+library(rworldmap)
+```
+- Weighted country counts
+```{R}
+df_country_counts <- df_country_severity %>%
+  group_by(iso3.codes) %>%
+  summarise(count = sum(severity.level, na.rm = TRUE))
+
+df_country_counts$iso3.codes <- toupper(df_country_counts$iso3.codes)
+
+df_country_counts_un <- df_country_severity_un %>%
+  group_by(un.codes) %>%
+  summarise(count = sum(severity.level, na.rm = TRUE))
+
+df_country_counts_un$un.codes <- toupper(df_country_counts_un$un.codes)
+```
+- Plot
+```{R}
+country_map <- joinCountryData2Map(df_country_counts
+  , joinCode = "ISO3"
+  , nameJoinColumn = "iso3.codes")
+```
+```{R}
+country_map_un <- joinCountryData2Map(df_country_counts_un
+  , joinCode = "ISO3"
+  , nameJoinColumn = "un.codes")
+```
+- so turns out UN codes are numeric, but the col labeled UN codes from the original dataset is actually a col of iso3 codes, so that's why everything in this section is weird
+- 153 codes matched successfully, 3 didn't 
+```{R}
+par(mai=c(0,0,0.2,0),xaxs="i",yaxs="i")
+mapCountryData(country_map_un, nameColumnToPlot="count" )
+```
+- Huh, so that's a lot of red, I'm not really sure how to modify it
+- With more time I'd come back to it, but I've already spent hours on this part of the project and the documentation's complicated so I'll go back to this later if I have time
+- Other way? Found this online
+```{R}
+world_map <- map_data("world")
+p <- ggplot() + coord_fixed() + xlab("") + ylab("")
+messy <- p + geom_polygon(data=world_map, aes(x=long, y=lat, group=group), color="black", fill="white")
+clean <- theme(panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(), 
+  panel.background = element_rect(fill = 'white', color = 'white'), 
+  axis.line = element_blank(),
+  axis.ticks = element_blank(), 
+  axis.text.x = element_blank(),
+  axis.text.y = element_blank())
+
+world <- messy + clean
+```
+```{R}
+world + geom_point(data=df_country, aes(x=longitude, y=latitude, color=degree.of.endangerment), size=1)
+```
+- The west coast of the Americas seems to have a lot more endangered languages than the east coast of the Americas. The middle of Africa is also more densely populated than the north and the south  
+- filter to just the ones that have a source
+```{R}
+df_has_source <- df_lang %>%
+  filter(!is.na(Sources))
+```
+
+```{R}
+df_source_country <- df_country %>%
+    semi_join(df_has_source, join_by(iso3.codes == ISO639.3.codes))
+world + geom_point(data=df_source_country, aes(x=longitude, y=latitude, color=degree.of.endangerment), size=1)
+```
+- Seems like a lot of the unsourced languages come from Australia
+```{R}
+df_no_source_country <- df_country %>%
+    semi_join(df_source, join_by(iso3.codes == ISO639.3.codes))
+world + geom_point(data=df_no_source_country, aes(x=longitude, y=latitude, color=degree.of.endangerment), size=1)
+```
+- I was right, a lot of the unsourced langs are from Australia. There's also quite a few in Southeast Asia and, again, the west coast of the Americas. 
+
+## If I had more time: 
+- figure out how to make the y axis labels stack instead of overlap
+- Reorder work to make it clearer because I realized I needed to do things to the data after I'd already done other analyses and didn't want to mess up previous ones by changing something far back
+- Figure out how to map the severity.level to the degree.of.severity in the second bar plot
+- Fix settings in 1st map (almost all red) to actually be helpful
+- Could also look into endangered langs by continent to zoom in, and actually calculate proportions of speakers to population (by country? density?) and graph that instead of just comparing number of speakers.
+

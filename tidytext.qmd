@@ -1,0 +1,384 @@
+---
+title: "p11"
+author: "Barb Ribeiro"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+#install.packages("tidytext")
+library(tidytext)
+```
+
+# Chapter 1
+
+## 1.2
+
+```{r}
+text <- c("Because I could not stop for Death -",
+          "He kindly stopped for me -",
+          "The Carriage held but just Ourselves -",
+          "and Immortality")
+text_df <- tibble(line = 1:4, text = text)
+```
+
+```{r}
+text_df %>%
+  unnest_tokens(word, text)
+```
+
+## 1.3
+
+```{r}
+library(janeaustenr)
+library(stringr)
+```
+
+```{r}
+original_books <- austen_books() %>%
+  group_by(book) %>%
+  mutate(linenumber = row_number(),
+         chapter = cumsum(str_detect(text, 
+                                     regex("^chapter [\\divxlc]",
+                                           ignore_case = TRUE)))) %>%
+  ungroup()
+```
+
+```{r}
+tidy_books <- original_books %>%
+  unnest_tokens(word, text)
+```
+
+```{r}
+tidy_books <- tidy_books %>%
+  anti_join(stop_words, join_by(word))
+```
+```{r}
+tidy_books %>%
+  count(word, sort = TRUE) 
+```
+```{r}
+tidy_books %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 600) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+## 1.5
+```{r}
+#install.packages("gutenbergr")
+library(gutenbergr)
+
+hgwells <- gutenberg_download(c(35, 36, 5230, 159))
+```
+
+```{r}
+tidy_hgwells <- hgwells %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+
+tidy_hgwells %>%
+  count(word, sort = TRUE)
+```
+```{r}
+bronte <- gutenberg_download(c(1260, 768, 969, 9182, 767))
+tidy_bronte <- bronte %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+tidy_bronte %>%
+  count(word, sort = TRUE)
+```
+
+```{r}
+frequency <- bind_rows(mutate(tidy_bronte, author = "Brontë Sisters"),
+                       mutate(tidy_hgwells, author = "H.G. Wells"), 
+                       mutate(tidy_books, author = "Jane Austen")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(author, word) %>%
+  group_by(author) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  pivot_wider(names_from = author, values_from = proportion) %>%
+  pivot_longer(`Brontë Sisters`:`H.G. Wells`,
+               names_to = "author", values_to = "proportion")
+```
+I don't really understand all of this ^. Should I? I feel like the author went through this very quickly
+```{r}
+library(scales)
+
+# expect a warning about rows with missing values being removed
+ggplot(frequency, aes(x = proportion, y = `Jane Austen`, 
+                      color = abs(`Jane Austen` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), 
+                       low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "Jane Austen", x = NULL) 
+```
+```{r}
+bronte_corr <- cor.test(data = frequency[frequency$author == "Brontë Sisters",],
+         ~ proportion + `Jane Austen`)
+wells_corr <- cor.test(data = frequency[frequency$author == "H.G. Wells",], 
+         ~ proportion + `Jane Austen`)
+```
+
+# RLadies
+```{r}
+#install.packages("readtext")
+#install.packages("igraph")
+#install.packages("ggraph")
+library(readtext)
+library(igraph)
+library(ggraph)
+```
+```{r}
+gutenberg_metadata %>%
+  filter(title %in% c("Alice's Adventures in Wonderland", "Grimms' Fairy Tales", "Andersen's Fairy Tales"))
+```
+```{r}
+fairytales_raw <- gutenberg_download(c(11, 2591, 1597))
+```
+```{r}
+fairytales_raw <- fairytales_raw %>% 
+  mutate(gutenberg_id = recode(gutenberg_id,
+    "11" = "Alice's Adventures in Wonderland",
+    "2591" = "Grimm's Fairytales",
+    "1597" = "Hans Christian Anderson's Fairytales"),
+  gutenberg_id = as.factor(gutenberg_id))
+```
+## 1
+```{r}
+(fairytales_tidy <- fairytales_raw %>% 
+  unnest_tokens(word, text))
+```
+```{r}
+fairytales_tidy <- fairytales_tidy %>% 
+  #mutate(word = str_remove_all(word, "_"))
+  mutate(word = str_extract(word, "[a-z']+"))
+```
+
+```{r}
+fairytales_tidy <- fairytales_tidy %>% 
+  anti_join(stop_words)
+meaningless_words <- tibble(word = c("von", "der", "thy", "thee", "thou"))
+fairytales_tidy <- fairytales_tidy %>% 
+  anti_join(meaningless_words)
+```
+
+```{r}
+fairytales_freq <- fairytales_tidy %>% 
+  group_by(gutenberg_id) %>%
+  count(word, sort=TRUE)
+```
+
+```{r}
+fairytales_freq %>% 
+  filter(n>30 & gutenberg_id == "Alice's Adventures in Wonderland") %>% 
+  #reorder orders word by number
+  ggplot(aes(x = n, y = reorder(word, n), fill = n)) +
+  geom_col(show.legend=FALSE) +
+  labs(
+    x = "Word",
+    y = "Frequency", 
+    title = "Most frequent words in Grimm's Fairytales"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+fairytales_idf <- fairytales_freq %>% 
+  bind_tf_idf(word, gutenberg_id, n)
+fairytales_idf %>%
+  select(gutenberg_id, word, tf_idf) %>% 
+  arrange(desc(tf_idf))
+```
+```{r}
+fairytales_idf$word <- as.factor(fairytales_idf$word)
+fairytales_idf %>%
+  group_by(gutenberg_id) %>% 
+  arrange(desc(tf_idf)) %>% 
+  top_n(20, tf_idf) %>% 
+  
+  
+  ggplot(aes(x = tf_idf, y = reorder(word, tf_idf), fill = gutenberg_id)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  # each book is in separate col bc facet_wrap
+  facet_wrap(~gutenberg_id, scales = "free") +
+  theme_minimal()
+```
+
+##2
+```{r}
+alice <- fairytales_raw %>% 
+  filter(gutenberg_id == "Alice's Adventures in Wonderland") %>% 
+  # extracts chapter count 
+  mutate(chapter = cumsum(str_detect(text, regex("^chapter [\\divxlc]", ignore_case = TRUE)))) %>%
+  select(-gutenberg_id) %>% 
+  filter(chapter != 0) %>% 
+  mutate(chapter = as_factor(chapter),
+         text = str_remove_all(text, "_"))
+alice %>% 
+  select(text, chapter)
+```
+```{r}
+# An n-gram is a combination of consecutive words of length n
+(alice_bigrams <- alice %>% 
+  unnest_tokens(bigram, text, token = "ngrams", n = 2))
+alice %>% 
+  unnest_tokens('4-gram', text, token = "ngrams", n = 4)
+```
+
+```{r}
+alice_bigrams <- alice_bigrams %>% 
+    drop_na(bigram)
+alice_bigrams %>% 
+  count(bigram, sort = TRUE)
+```
+
+```{r}
+(alice_bigrams <- alice_bigrams %>% 
+  separate(col = bigram,
+           into = c("word1", "word2"),
+           sep = " ",
+           # default deletes og col
+           remove = FALSE)) 
+(alice_bigrams_stop <- alice_bigrams %>%
+  filter(!word1 %in% stop_words$word & !word2 %in% stop_words$word))
+alice_bigrams_stop %>% 
+  count(bigram, sort = TRUE)
+```
+
+```{r}
+alice_bigrams_stop %>% 
+  count(bigram, sort = TRUE) %>% 
+  filter(n > 4) %>% 
+  ggplot(aes(x = reorder(bigram, n),
+             y = n,
+             fill = n)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "frequency", title = "Most frequent bigrams in Alice's Adventures in Wonderland") +
+  # easier to read
+  coord_flip() +
+  theme_minimal()
+```
+
+```{r}
+# absolute matching
+alice_bigrams_stop %>% 
+  filter(word1 == "alice" | word2 == "alice") %>% 
+  distinct(bigram)
+
+# partial matching
+alice_bigrams_stop %>% 
+  filter(str_detect(bigram, "alice")) %>% 
+  distinct(bigram)
+```
+
+Characteristic words per chapter instead of book
+```{r}
+(alice_bigram_tfidf <- alice_bigrams_stop %>% 
+  count(chapter, bigram) %>% 
+  bind_tf_idf(bigram, chapter, n))
+alice_bigram_tfidf %>% 
+  arrange(desc(tf_idf))
+```
+
+```{r}
+alice_bigram_tfidf %>%
+  group_by(chapter) %>%
+  # same as top_n
+  # said 3 but includes ties so some chapters > 3
+  slice_max(tf_idf, n = 3) %>%
+  ungroup() %>%
+  ggplot() +
+  aes(x = tf_idf, 
+      y = fct_reorder(bigram, tf_idf), 
+      fill = chapter) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ chapter, scales = "free") +
+  labs(x = "tf-idf", y = NULL) +
+  theme_minimal()
+```
+
+###Network Graphs
+Data wrangling
+```{r}
+alice_graph <- alice_bigrams_stop %>% 
+  count(word1, word2) %>%
+  filter(n > 3) %>% 
+  # wrangle data in format for network 
+  graph_from_data_frame()
+```
+
+```{r}
+set.seed(2021) #somethings are random, so sets the random things for reduplication
+# like ggplot with its attributes, add on
+ggraph(alice_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  # makes actual words show up, just nudges text to can read easier
+  geom_node_text(aes(label = name), 
+                 vjust = 1, hjust = 1)
+```
+Don't know which word comes first and second
+```{r}
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+```
+```{r}
+ggraph(alice_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), # links are more transparent if the bigram isn't as freq
+                 show.legend = FALSE,
+                 arrow = a, end_cap = circle(.03, 'inches')) + # don't touch pts
+  geom_node_point(color = "purple", size = 3) + # larger, purple nodes
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void() +
+  labs(title = 'Bigrams (two-word combinations) in "Alice\'s Adventures in Wonderland"')
+```
+
+### Beyonce
+```{r}
+beyonce <- read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-09-29/beyonce_lyrics.csv')
+head(beyonce)
+```
+line by line
+```{r}
+custom_stop <- c("ooh", "ha", "huh", "uh", "yuh", "dun", "ohh", "ohhh", "eh", "whoa", "www", "vvs")
+```
+
+```{r}
+beyonce_graph <- beyonce %>% 
+  filter(song_name != "Halo Greek translation") %>% 
+  unnest_tokens(bigram, line, token = "ngrams", n = 2) %>% 
+  drop_na(bigram) %>% 
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% stop_words$word & 
+           !word2 %in% stop_words$word &
+           !word1 %in% custom_stop &
+           !word2 %in% custom_stop) %>% 
+  count(word1, word2) %>% 
+  filter(n > 15) %>% 
+  graph_from_data_frame()
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+ggraph(beyonce_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), 
+                 show.legend = FALSE,
+                 arrow = a, end_cap = circle(.03, 'inches'), 
+                 color = "darkorchid4") + 
+  geom_node_point(color = "cadetblue3", size = 3) + 
+  geom_node_text(aes(label = name), vjust = 1.2, hjust = 1.2) +
+  theme_void() +
+  labs(title = "Bigrams (two-word combinations) in Beyoncé's song lyrics")
+```
+
+

@@ -1,0 +1,556 @@
+---
+title: "hp2: Star Wars Script Text Analysis"
+author: "Barb Ribeiro"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+## 1. Introduction
+The "Star Wars Movie Scripts" Dataset by Xavier on Kaggle features three separate text files for each of the original trilogy movies (IV, V, VI). Important to note - only Basic (in universe name for English) lines are included. For example, R2-D2's beeps and Chewbacca's groans are not included. 
+
+I'll be doing some text analysis to find out what features and trends can help differentiate one movie from another, or one character from another. For example, can I recognize who a character is by their top six tf-idf scored words? I will be looking at word counts, tf-idf scores, and sentiment analysis trends for movies, and word counts and tf-idf scores for characters. Recognizability will not be an unbiased measurement. I will describe my argument for whether or not it is recognizable if I believe there's not a clear answer.
+
+I'll be using the movie titles and their episode numbers for the original trilogy interchangeably, here's a cheat sheet if you're not as familiar:
+
+* A New Hope -> Episode 4
+* The Empire Strikes Back -> Episode 5
+* Return of the Jedi -> Episode 6
+
+Now I'll load in the packages and the data
+```{r, output = FALSE}
+library(tidyverse)
+library(tidytext)
+```
+```{r}
+new_hope <- read.table("SW_EpisodeIV.txt")
+empire_strikes <- read.table("SW_EpisodeV.txt")
+return_jedi <- read.table("SW_EpisodeVI.txt")
+```
+Now lets take a look at the top 5 rows and the structure of `new_hope`.
+```{r}
+head(new_hope, n = 5)
+str(new_hope)
+```
+We can see that the first row's values are supposed to be the column's values, and that the first column is a char when it should probably be an int. Let's clean it up.
+```{r}
+colnames(new_hope) <- new_hope[1, ]
+new_hope <- new_hope[-1, ]
+new_hope$line_number <- as.integer(new_hope$line_number)
+head(new_hope, n = 5)
+str(new_hope)
+```
+Since that worked, we can write a function to modify the other two dfs
+```{r}
+clean_df <- function(df) {
+  colnames(df) <- df[1, ]
+  df <- df[-1, ]
+  df$line_number <- as.integer(df$line_number)
+  return(df)
+}
+empire_strikes <- clean_df(empire_strikes)
+return_jedi <- clean_df(return_jedi)
+head(empire_strikes)
+str(return_jedi)
+```
+
+Now let's make sure all the dialogue is uniform
+```{r}
+clean_df_2 <- function(df) {
+  df <- df %>%
+    filter(!is.na(dialogue) & dialogue != "") %>%
+    mutate(dialogue = tolower(dialogue))
+  return(df)
+}
+new_hope_clean <- clean_df_2(new_hope)
+empire_strikes_clean <- clean_df_2(empire_strikes)
+return_jedi_clean <- clean_df_2(return_jedi)
+```
+Now we have three separate, tidy data frames for each of the movies with the columns `line_number`, `character`, and `dialogue` where each row is a new line in the movie that's `line_number`th of the movie spoken by `character` with the dialogue itself in `dialogue`.
+
+## 2. Dataframe Basics
+To get a better idea of our dataset, lets look at some basic information from each movie. 
+
+Let's look at the total number of dialogues and unique characters.
+```{r}
+basic_info <- tibble(
+  episode = c("Episode 4", "Episode 5", "Episode 6"),
+  dialogues = c(new_hope_clean %>% pull(dialogue) %>% length(),
+            empire_strikes_clean %>% pull(dialogue) %>% length(),
+            return_jedi_clean %>% pull(dialogue) %>% length()),
+  characters = c(new_hope_clean %>% pull(character) %>% unique() %>% length(),
+                 empire_strikes_clean %>% pull(character) %>% unique() %>% length(),
+                 return_jedi_clean %>% pull(character) %>% unique() %>% length())
+)
+basic_info
+```
+
+As we can see, A New Hope is the movie with the most separate characters and dialogues (not necessarily lines as some dialogues contain multiple lines eg. At the beginning of New Hope, 3PO has 5 dialogues in a row, and some contain more than one sentence (it's a conversation between 3PO and R2-D2, who is beeping in between 3PO's lines).
+
+```{r}
+lines_plot <- ggplot(basic_info, aes(x = episode, y = lines, fill = "Lines")) +
+  geom_bar(stat = "identity", width = 0.5) +
+  scale_fill_manual(values = c("Lines" = "royalblue1")) +
+  labs(title = "Dialogues by Episode",
+       x = "Episode",
+       y = "Dialogues")
+```
+```{r}
+characters_plot <- ggplot(basic_info, aes(x = episode, y = characters, fill = "Characters")) +
+  geom_bar(stat = "identity", width = 0.5) +
+  scale_fill_manual(values = c("Characters" = "darkorchid3")) +
+  labs(title = "Characters by Episode",
+       x = "Episode",
+       y = "Characters")
+```
+
+Overall, the number of dialogues decrease in every new movie, and the number of unique Basic-speaking characters stay in an 11 character range.
+
+Now that we have a better understanding of the variability of our data, let's start some text analysis. 
+
+## 3. Dialogue trends between movies
+### 3.1 Most common words by count per movie 
+Our first step is tokenizing all of the dialogue.
+```{r}
+ep4_words <- new_hope_clean %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+ep5_words <- empire_strikes_clean %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+ep6_words <- return_jedi_clean %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+head(ep4_words)
+head(ep5_words)
+head(ep6_words)
+```
+As expected, most of the words in the top size of each movie are stop words, so lets remove them. 
+I'll want to calculate tf-idf scores later, so I'm making separate dfs without stopwords as I'll still need them later.
+```{r}
+ep4_nostop <- ep4_words %>%
+  anti_join(stop_words, join_by(word))
+ep5_nostop <- ep5_words %>%
+  anti_join(stop_words, join_by(word))
+ep6_nostop <- ep6_words %>%
+  anti_join(stop_words, join_by(word))
+```
+Next step is combining the all the movies' words into one df.
+```{r}
+# Add a column with movie name to each data frame
+ep4_name <- mutate(ep4_nostop, movie = "A New Hope")
+ep5_name <- mutate(ep5_nostop, movie = "The Empire Strikes Back")
+ep6_name <- mutate(ep6_nostop, movie = "Return of the Jedi")
+
+# Join all dfs into a single df
+all_words <- bind_rows(ep4_name, ep5_name, ep6_name)
+```
+The data frame is quite large, so time to plot the top 10 words (by count) in each movie!
+```{r}
+all_words %>%
+  group_by(movie) %>%
+  slice_max(n, n = 6) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = movie)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~movie, ncol = 2, scales = "free") +
+  labs(x = "n", y = NULL)
+```
+_I tried for ages to get the ordering correct, and I know it has something to do with how ggplot is transferring the order placement of some of the shared words from one of the movies to another, but I couldn't figure out a way to avoid the incorrect ordering even though I tried every combination of arrange() reorder() and fct_reorder() I could think of. I know you're busy with end of semester grading, but if you know how to fix this off the top of your head, please let me know._
+
+Here we can see that many of the top words are the same across the trilogy, most being names and honorifics. I was honestly kind of surprised that "sir" wasn't part of the default tidytext set of stopwords, but I'll keep it in as it's interesting that while it's in the top 2 of the most common words in _A New Hope_ and _The Empire Strikes Back_, it doesn't make the top ten in _Return of the Jedi_. 
+
+While we might be able to guess the movie without looking at the title by identifying the few unique popular words between the movies like "alderran," "lando," and "emperor," it's not immediately obvious, especially since those words are still said in the other movies just not as frequently. Let's calculate the df-idf scores of the words in the dialogue to see if that can improve the recognizably of the individual movies by their dialogues' words. 
+
+### 3.2 Most frequent words by tf-idf scores per movie 
+
+I'll calculate the tf-idf scores using a new version of `all_words` as the full corpus, but I need to include the stopwords in this one. I'll combine the original tokenized dfs with stopwords included first using the same process as earlier.
+```{r}
+ep4_stop <- mutate(ep4_words, movie = "A New Hope")
+ep5_stop <- mutate(ep5_words, movie = "The Empire Strikes Back")
+ep6_stop <- mutate(ep6_words, movie = "Return of the Jedi")
+
+all_words_stop <- bind_rows(ep4_stop, ep5_stop, ep6_stop)
+```
+Now we can calculate the total number of words in each movie to later do the tf-idf calculations correctly. 
+```{r}
+total_sw_words <- all_words_stop %>%
+  group_by(movie) %>%
+  summarize(total = sum(n))
+```
+```{r}
+new_all_words <- left_join(all_words_stop, total_sw_words)
+```
+
+Time to calculate the tf-idf scores of all the words and see which terms have the highest tf-idf, and are, therefore, the most unique to each movie, in the original trilogy. 
+
+```{r}
+movie_tf_idf <- new_all_words %>%
+  bind_tf_idf(word, movie, n)
+
+unique_words_movie <- movie_tf_idf %>%
+  select(-total) %>%
+  arrange(desc(tf_idf))
+head(unique_words_movie, n = 10)
+```
+Let's visualize it
+```{r}
+unique_words_movie %>%
+  group_by(movie) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = movie)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~movie, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+Honestly, I don't know what I was expecting, but it wasn't these words. It is, however, easier to identify the movie by its top words, at least in my opinion and I'll try to explain myself with some examples.
+
+_A New Hope_
+
+* "kenobi" is a main character, but dies at the end and isn't nearly as frequently mentioned in the later movies
+* Luke's "uncle" (who is referred to as uncle) and uncle Ben (Luke is the only main character who calls him that) are mentioned a lot (both die)
+* "red", "biggs," and "plans" are all mentioned a lot because of the death star plot, as red is one of the fighter x-wing (spaceship) designations, biggs is a rebel pilot (who dies, doesn't show up again), and the main plot is literally getting the death star plans to the rebel base. "death" and "star" are probably not the most unique as there is another one in _Return of the Jedi_ and people mention death and star separately in all three movies.
+
+_The Empire Strikes Back_
+
+* "lando", like I said in the word count section, is an important side character in ep5 but isn't featured as prominently or referred to by name as much in ep6. 
+* "echo", freezing," and "cave" are all from when the rebels are on Hoth, a cold, icy planet where the rebel's base is named echo, and Luke gets captured by a yeti-looking thing and put in a cave. 
+
+Honestly, my memory might be failing me, but I'm going to look into the other frequent ep5 words next because I can't explain a lot of them. 
+
+_Return of the Jedi_
+
+* "became" is interesting as the third movie is all about Luke completing his arc and becoming a jedi, but I wouldn't have guessed that it was the top unique word for ep6. 
+* "hutt" is more obvious as this movie is when Jabba the Hutt is very involved in the plot early on
+* "endor" is also only featured in ep6 and is the location of the last major battle in the movie. 
+* "tyridium" is a ship the rebels stole from the Empire (only mentioned in this movie) but it is somewhat surprising because I don't remember it being mentioned much. 
+
+Since I'm curious about the ep5 unique words, I'm going to look up some of the lines of the unique words I'm confused about: rouge and dack. 
+```{r}
+rouge_lines <- empire_strikes_clean %>%
+  filter(grepl("rouge", dialogue))
+rouge_lines
+```
+Okay, so rouge is just the new fighter squad designation for red (it's just in french this time?) used during the Battle of Hoth. Pretty useful for identifying its movie then, as it's just this specific movie's version of "red" in ep4, I just forgot.
+```{r}
+dack_lines <- empire_strikes_clean %>%
+  filter(grepl("dack", dialogue))
+dack_lines
+```
+Apparently dack is one of the pilots in the hoth battle, who I also just forgot. Dack makes movie identification easy as it's as specific as "biggs" in ep4. I guess ep5 being less recognizable is not a fluke, and is just me not remembering the Battle of Hoth. 
+
+We can then conclude that the three movies are at least somewhat more identifiable by their most unique words than by their most frequent words, but only if you are very familiar with the movies and can remember very specific and less important (less used) words like "tyridium" and "rouge."
+
+### 3.3 Sentiment analysis
+Let's move onto something a bit different, now looking at the frequency of positive and negative words throughout the duration of each movie. I'm going to guess that each movie will have a similar trend as they all have similar plot structure. 
+
+I experimented with different indexes and I think that an index of 25 is the best representation, with enough specificity to handle the quick sentiment changes, but not too small to where we can identify any sort of overall trend. 
+I tried two different sentiment lexicons NRC and Bing et al. 
+NRC: 
+```{r}
+movies_sentiments <- all_words %>%
+  mutate(linenumber = row_number()) %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(movie, index = linenumber %/% 25, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+```{r}
+ggplot(movies_sentiments, aes(index, sentiment, fill = movie)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~movie, ncol = 2, scales = "free_x")
+```
+Bing: 
+```{r}
+movies_sentiments_2 <- all_words %>%
+  mutate(linenumber = row_number()) %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(movie, index = linenumber %/% 25, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+```{r}
+ggplot(movies_sentiments_2, aes(index, sentiment, fill = movie)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~movie, ncol = 2, scales = "free_x")
+```
+Bing is clearly more biased negatively, which makes sense as it has way more negative words than positive in its lexicon. NRC is still biased negatively with more negative than positive words, but it's not more than double the amount. 
+
+One surprising thing that's found in both analyses is that at the end of all the movies, at the climax, the negative spike and then the positive spike are both smaller than at other places in the movie. I was expecting that those would be the largest positive and negative spikes as in all of their climaxes the villains have the clear upper hand, but then are bested by the heroes who celebrate their win. 
+
+Now I realize that because the negative spike occurs during action sequences where the heroes (usually, expect ep6) don't have a lot of time to verbally lament their misfortune, there aren't as many negative words as early in the movie when they've just been beaten and have time to discuss their failures. 
+
+Similarly with positive words, when they're celebrating it's usually just scenes of people cheering without much talking, so not as many positive words until they have to wrap up the trilogy in ep6. 
+
+I think I was expecting the plots to look like novel analyses we've done in the past, where the spikes are greater as the battles are a part of the text. 
+
+Another thing that's unexpected is that ep4 ends negatively in both analyses. There not being a positive spike makes sense as their victory ceremony doesn't feature a lot of words, but the negative spike still confuses me. 
+
+Overall, the sentiment structure overall is only somewhat helpful in identifying what movie they belong too, with the very large negative spike in A New Hope clearly marking itself, but ep5 and 6 don't have specific characteristics that are shared between the graphs of both sentiment lexicons.
+
+## 4. Dialogue trends between main characters
+### 4.1 Most common words by main character by count
+
+Moving on to text analysis with respect to characters instead of movies, let's first find the 5 characters in each movie with the most lines. 
+```{r}
+ep4_five <- new_hope_clean %>%
+  count(character) %>%
+  arrange(desc(n)) %>%
+  top_n(5)
+ep5_five <- empire_strikes_clean %>%
+  count(character) %>%
+  arrange(desc(n)) %>%
+  top_n(5)
+ep6_five <- return_jedi_clean %>%
+  count(character) %>%
+  arrange(desc(n)) %>%
+  top_n(5)
+```
+Unsurprisingly, the top five in _A New Hope_ are Luke Skywalker, Han Solo, C-3PO, Ben (Obi-Wan) Kenobi, and Leia Organa. The top five in _Empire Strikes Back_ are Han, Luke, Lei, 3PO, and Lando Calrissian. The top five in _Return of the Jedi_ are Han, Luke, 3PO, Leia, and Darth Vader. Honestly, this might be the most identifying feature of each movie yet, and it wasn't even my intention, I just didn't want to be biased towards one of the movies by my character picks. 
+
+Now I'll combine their individual dataframes and filter it to just this list of characters: Luke, Han, 3PO, Kenobi, Leia, Lando, and Darth Vader
+
+```{r}
+all_movies <- bind_rows(new_hope_clean, empire_strikes_clean, return_jedi_clean)
+luke_lines <- all_movies %>%
+  filter(grepl("LUKE", character))
+han_lines <- all_movies %>%
+  filter(grepl("HAN", character))
+three_lines <- all_movies %>%
+  filter(grepl("THREEPIO", character))
+ben_lines <- all_movies %>%
+  filter(grepl("BEN", character))
+leia_lines <- all_movies %>%
+  filter(grepl("LEIA", character))
+lando_lines <- all_movies %>%
+  filter(grepl("LANDO", character))
+vader_lines <- all_movies %>%
+  filter(grepl("VADER", character))
+```
+
+Time to tokenize their dialogue and remove stopwords. I'm only going to show Luke's for this because it ends up being very repetitive and it's the same process for each character.
+```{r}
+luke_words <- luke_lines %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+luke_clean <- luke_words %>%
+  anti_join(stop_words)
+```
+
+```{r, echo = FALSE}
+han_words <- han_lines %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+han_clean <- han_words %>%
+  anti_join(stop_words)
+three_words <- three_lines %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+three_clean <- three_words %>%
+  anti_join(stop_words)
+ben_words <- ben_lines %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+ben_clean <- ben_words %>%
+  anti_join(stop_words)
+leia_words <- leia_lines %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+leia_clean <- leia_words %>%
+  anti_join(stop_words)
+lando_words <- lando_lines %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+lando_clean <- lando_words %>%
+  anti_join(stop_words)
+vader_words <- vader_lines %>%
+  unnest_tokens(word, dialogue) %>%
+  count(word, sort = TRUE)
+vader_clean <- vader_words %>%
+  anti_join(stop_words)
+```
+Next step is combining the all the characters' words into one df.
+```{r}
+luke_name <- mutate(luke_clean, character = "Luke")
+han_name <- mutate(han_clean, character = "Han")
+ben_name <- mutate(ben_clean, character = "Ben")
+leia_name <- mutate(leia_clean, character = "Leia")
+lando_name <- mutate(lando_clean, character = "Lando")
+vader_name <- mutate(vader_clean, character = "Vader")
+three_name <- mutate(three_clean, character = "3PO")
+
+all_chars <- bind_rows(luke_name, han_name, ben_name, leia_name, lando_name, vader_name, three_name)
+glimpse(all_chars)
+```
+Now I'll plot the top 6 words by each character to make things easier to interpret. 
+```{r}
+all_chars %>%
+  group_by(character) %>%
+  slice_max(n, n = 6) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = character)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~character, ncol = 2, scales = "free") +
+  labs(x = "n", y = NULL)
+```
+
+These characters, unsurprisingly, all reference each other a lot, especially Luke, who seems to be in the top 6 for everyone except himself, Lando, and Vader - talk about a fatherly betrayal. Lando mentions all the other main characters except for Luke and C-3PO (and Ben, since he died in ep4), which makes sense because most of his scenes are with Leia, Han, and Vader. 
+
+I'd say that top 6 words by count is quite poor in terms of recognizably for each character. Even though some characters are easy, some are excruciatingly similar and include many of the same words. 
+
+Han calls Luke "kid" a lot and it's not featured in anyone else's top 6, so he's identifiable. 3PO and Vader both have "master", but Vader has "force" and "emperor" while 3PO has "artoo", and since 3PO is a droid and doesn't talk about the force, doesn't speak with the emperor, and is always with artoo, those two could still be differentiated. I think that's the end of identifiable charts by character 
+
+Leia, Luke, Ben, and Lando, while they do have some unique words, they're not the most obviously connected to themselves. For example, Luke, who could be recognizable by "father" as he's Vader's son, he Ben both have "father" as they discuss Vader being Luke's father quite extensively. Ben also has some more jedi, wisened old man words like "force," "dark," and "time", but nothing immediately confirms that his chart is his chart. Leia only has one non-main character name word - hope, probably from the famous line "Help me obi-wan kenobi, you're my only hope" that her recording says repeatedly. She's not the only one who says the word "hope" (or obi-wan) though, so it's not definitive proof. Let's see if the top tf-idf scoring words are any more recognizable.
+
+
+### 4.2 Most frequent words by tf-idf scores per character
+I needed the full corpus, but I did this incorrectly the first time, creating a dataframe that calculated the tf-idfs with a corpus of only words from these 7 characters, not the whole movie, which really skewed things for Vader, as he's the only villain and so the only one who used words like admiral (an Empire rank) frequently. While still interesting, I want the most identifiable words for each character, so a full text corpus, is, I think, more useful. 
+Here I am creating the corpus including the character's who said them 
+
+```{r}
+all_words_chars <- all_movies %>%
+  select(everything()) %>%
+  unnest_tokens(output = "word", input = dialogue) %>%
+  group_by(word, character) %>%
+  count(word, sort = TRUE)
+```
+Yes, I do now realize I could've made this earlier and filtered for the individual characters right before analysis so I wouldn't've had to repeat a bunch of steps :(
+
+Calculating the total number of unique words each character speaks: 
+```{r}
+total_sw_words_chars <- all_words_chars %>%
+  group_by(character) %>%
+  summarize(total = sum(n))
+```
+```{r}
+new_all_words_char <- left_join(all_words_chars, total_sw_words_chars)
+```
+
+Let's see the most unique words of each character:
+```{r}
+char_tf_idf <- new_all_words_char %>%
+  bind_tf_idf(word, character, n) %>%
+  filter(character %in% c("LUKE", "BEN", "LEIA", "HAN", "THREEPIO", "LANDO", "VADER")) %>%
+  anti_join(stop_words) %>%
+  arrange(desc(tf_idf))
+
+unique_words <- char_tf_idf %>%
+  select(-total) %>%
+  arrange(desc(tf_idf))
+head(unique_words, n = 10)
+```
+
+Original, before calculating tf-idf with all the movie dialogue: Seems like 3PO and Vader have the most unique words, C3PO with two in the top 10, Vader with 4. 
+Current: 3PO now has three instead of 2 top scores, but it overall seems more balanced and there's no character who has more than 3 top scores
+
+Visualize time!
+
+```{r}
+unique_words %>%
+  group_by(character) %>%
+  slice_max(tf_idf, n = 6) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = character)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~character, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+Honestly, not that different from before I included all the movie lines - Vader still has admiral in his top ten, for example. 
+
+The top tf-idf scores change only a little bit compared to the normal counts. I don't know if I calculated something wrong or if these characters say Luke so frequently and other characters hardly ever do, but Luke is still high up there with Ben's, Leia's, and C-3PO's charts (but not Han's, interestingly enough). C-3PO is identifiable by the "sir" and "dear", Vader by "admiral", and Han is still identifiable by "kid" but the others are still not super unique, with the exception of Luke. 
+
+Luke now has "uncle," and as that's strongly associated with him, he's now identifiable. Leia, Ben, and Lando are still harder to pick out. Lando has "pirate" which might make him identifiable, but I don't personally associate him with saying "pirate," so at the very least he's not identifiable to me. 
+
+While I could piece together who's who by the process of elimination, that's true for most identifiers for these main characters, and I was looking to see if there was at least one word per category that would immediately call to mind that character. 
+
+I've realized that my movie identifiability graphs were done with n=10, not n=6 like my character tests so I'll replicate them here with n= 6
+By word count: 
+```{r}
+all_words %>%
+  group_by(movie) %>%
+  slice_max(n, n = 6) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = movie)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~movie, ncol = 2, scales = "free") +
+  labs(x = "n", y = NULL)
+```
+
+* ep4: Recognizable by red
+* ep5: Not recognizable
+* ep6: Recognizable by shield (but not as strongly as from words found in n=10 as the 1st Death Star also had a shield)
+
+By tf-idf score:
+```{r}
+unique_words_movie %>%
+  group_by(movie) %>%
+  slice_max(tf_idf, n = 6) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = movie)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~movie, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+
+* ep4: Recognizable by all of the words
+* ep5: Recognizable by all words except maybe transports, scoundrel, and ground
+* ep6: Recognizable by endor and hutt
+
+So overall, not as recognizable as when it was the top ten words, but there was only one miss: recognizably for movies with n = 6 is 5/6: ~ 83%
+
+Now for character recognizably with n = 10
+```{r}
+all_chars %>%
+  group_by(character) %>%
+  slice_max(n, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = character)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~character, ncol = 2, scales = "free") +
+  labs(x = "n", y = NULL)
+```
+
+ * 3PO: recognizable by sir, dear, and princess
+ * Han: recognizable kid
+ * Leia: could be a recognizable argument for alderaan, but it's not strong enough in my opinion
+ * Vader: recognizable by admiral  
+ * Ben: not recognizable
+ * Lando: not recognizable
+ * Luke: recognizable by uncle
+
+```{r}
+unique_words %>%
+  group_by(character) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = character)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~character, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+
+ * 3PO: recognizable by sir, dear, and goodness
+ * Han: recognizable kid
+ * Leia: could be a recognizable argument for hope, but it's not strong enough in my opinion
+ * Vader: recognizable by son, destiny
+ * Ben: could be a recognizable argument for seduced, but it's not strong enough in my opinion (seduced by the dark side)
+ * Lando: not recognizable
+ * Luke: recognizable by uncle, biggs
+ 
+ So overall, more recognizable with n=10, but not as recognizable overall as the movies: recognizability is 8/14: ~57%
+ 
+## 5. Conclusion
+
+In conclusion, the individual movies are more recognizable by these text analysis features than the main characters. Word count was helpful in identifying the different movies, especially if one was not as familiar with the movies, but ep5 became unrecognizable when n dropped to 6. Tf-idf scores provided stronger identification, but only if you had a deeper knowledge of the movies as the terms were more specific and niche. The sentiment analysis was the weakest identifier, as Return of the Jedi and Empire Strikes Back both had similar trends if we're excluding unique trends that were only found in one of the two sentiment lexicons. 
+
+Word count with n=6 was terrible at creating recognizable charts, with only one solidly identified character. Tf-idf was a little better, with three of the seven now being identifiable. The real improvement happened when n = 10: word count identified 4, more than tf-idf with n = 6. Tf-idf recognizability also rose to 5 out of 7. Clearly, increasing n increases recognizability considerably, especially with character text analyses. 
+
+
+## 6. If I had more time
+
+* First I'd clean up my code and rename the variables so it doesn't get as confusing. I'd also make it very clear and better communicate which movies/characters are recognizable and which aren't, like I did at the end. 
+* One of the first things I'd do is calculate the top negative and positive words for each movie and character, to see if that's an identifiable feature. 
+* Then I'd calculate the frequency of positive to negative word normalized by the overall counts of each throughout the movie, see if that yields any interesting results, specifically to do with jedi vs sith or rebel vs empire characters. 
+* I also wanted to make wordclouds using the masks provided by the dataset which were in the shapes of various characters, more for fun than analysis. 
+* I also didn't get a chance to do any kind of bigram analysis, so I'd do that too. 

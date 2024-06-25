@@ -1,0 +1,167 @@
+---
+title: "p8"
+subtite: "By Barb Ribeiro"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(nycflights13)
+```
+
+## Joins
+
+## Exercises 21.3.4
+
+## 1. Find the 48 hours (over the course of the whole year) that have the worst delays.Can you see any patterns?
+
+Need origin and time_hour as they are compound foreign key to weather
+
+```{r}
+flights2 <- flights |> 
+  mutate(id = row_number(), .before = 1)
+flights2
+```
+
+```{r}
+worst_delays <- flights2 %>%
+  group_by(origin, time_hour) %>%
+  summarise(dep_delay_mean = mean(dep_delay)) %>%
+  arrange(desc(dep_delay_mean)) %>%
+  ungroup() %>% 
+  slice(1:48)
+```
+
+Need to ungroup before slicing bc still going by origin/time_hour, so \> 48 hrs
+
+```{r}
+weather_delays <- semi_join(weather, worst_delays, join_by(origin, time_hour))
+```
+
+I think I did this wrong, maybe high precipitation, higher wind speeds, and later in the day (not weather)? The documentation is also weirdly organized and described
+
+## 2. How can you find all flights to those destinations?
+
+```{r}
+top_dest <- flights2 |>
+  count(dest, sort = TRUE) |>
+  head(10)
+```
+
+```{r}
+top_dest_flights <- flights2 %>%
+  semi_join(top_dest, join_by(dest == dest))
+```
+
+## 3. Does every departing flight have corresponding weather data for that hour?
+
+```{r}
+weather_check <- flights2 %>%
+  anti_join(weather, join_by(time_hour == time_hour))co
+```
+
+No. I think I did this wrong though because it doesn't account for the location of the dep flight. The question is worded weird
+
+## 4. What do the tail numbers that don't have a matching record in planes have in common?
+
+```{r}
+tail_check <- flights2 %>%
+  anti_join(planes, join_by(tailnum)) %>%
+  distinct(tailnum)
+```
+
+```{r}
+tail_compare <- flights2 %>%
+  semi_join(tail_check, join_by(tailnum))
+```
+
+```{r}
+ggplot(data = tail_compare, aes(x = carrier)) +
+    geom_bar()
+```
+
+The carrier is either American Airlines or Envoy Air. Flight number ends in A or Q
+
+## 5. Add a column to planes that lists every carrier that has flown that plane.
+
+remove all entries w/o tailnums
+
+get only distinct combinations of tailnum and carrier (bc so many flights have the same num and carrier)
+
+count the number of tailnum, if \> 1 then it has more than one carrier
+
+I don't think it accounts for a tailnum with 3 carrier's?
+
+```{r}
+all_carriers <- flights %>%
+  filter(!is.na(tailnum)) %>%
+  distinct(tailnum, carrier) %>%
+  count(tailnum) %>%
+  filter(n > 1)
+```
+
+```{r}
+num_flightnums <- flights %>%
+  filter(!is.na(tailnum)) %>%
+  distinct(tailnum) %>%
+  count(tailnum) %>%
+  nrow()
+  
+```
+
+There are 17 planes with 2 carriers. Mostly confirm hypothesis, 17 out of 4043 is very little.
+
+Couldn't really figure out how to connect the two? joined carrier to flights but not combined
+
+```{r}
+plane_carrier <- flights %>%
+  group_by(tailnum) %>%
+  left_join(airlines, join_by(carrier))
+```
+
+## 6. Add the latitude and the longitude of the origin and destination airport to flights
+
+```{r}
+latlong <- flights2 %>%
+  inner_join(select(airports, origin = faa, origin_lat = lat, origin_long = lon), join_by(origin)) %>%
+  inner_join(select(airports, dest = faa, dest_lat = lat, dest_long = lon), join_by(dest))
+```
+
+Easier to rename during? since we already have to write it out and renaming before the join won't work because they're not separated yet, and after there's a chance you flip origin/dest or lat/long if you don't remember which cols go first. Also don't have to deal with suffix
+
+## 7. Compute the average delay by destination, then join on the airports data frame so you can show the spatial distribution of delays
+```{r}
+avg_delay_dest <- flights2 %>%
+  group_by(dest) %>%
+  summarise(delay_mean = mean(arr_delay, na.rm = TRUE)) %>%
+  inner_join(airports, join_by(dest == faa))
+```
+- Doesn't work if don't remove NA delays
+- Need to group by dest or else dest isn't a col to then join
+```{r}
+avg_delay_dest |>
+  ggplot(aes(x = lon, y = lat, color = delay_mean)) +
+    borders("state") +
+    geom_point() +
+    coord_quickmap()
+```
+- Size = delay_mean is ugly and hard to read
+
+## 8. What happened on June 13 2013
+```{r}
+june13 <- flights2 %>%
+  filter(year == 2013, month == 6, day == 13) %>%
+  group_by(dest) %>%
+  summarise(delay_mean = mean(arr_delay, na.rm = TRUE)) %>%
+  inner_join(airports, join_by(dest == faa))
+  
+june13 %>% 
+  ggplot(aes(x = lon, y = lat, color = delay_mean, size = delay_mean)) +
+    borders("state") +
+    geom_point() +
+    coord_quickmap()
+```
+Lots of delays in the Southeast. There were a lot of large storms in Georgia, Tennesse, Alabama, which is where most of the storms were.

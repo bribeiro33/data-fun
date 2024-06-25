@@ -1,0 +1,125 @@
+---
+title: "p9"
+subtite: "By Barb Ribeiro"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Strings
+
+```{r}
+library(tidyverse)
+library(babynames)
+```
+
+## 16.3.4 Exercises
+
+## 1. Compare and contrast the results of paste0() with str_c() for the following inputs:
+
+```{r}
+str_c("hi ", NA)
+str_c(letters[1:2], letters[1:3])
+```
+
+```{r}
+paste0("hi ", NA)
+paste0(letters[1:2], letters[1:3])
+```
+
+str_c returns NA and and a recycling error while paste0 returns "hi NA" and "aa" "bb" "ac" paste0 seems to have inherent knowledge of letters while str_c doesn't
+
+## 2. Convert the following expressions from str_c() to str_glue() or vice versa
+
+### a) str_c("The price of", food, " is ", price)
+
+```{r}
+str_glue("The price of {food} is {price}")
+```
+
+### b) str_glue("I'm {age} years old and live in {country}")
+
+```{r}
+str_c("I'm ", age, " years old and live in ", country)
+```
+
+### c) str_c("\\section{", title, "}")
+
+```{r}
+str_glue("\\section{{{title}}")
+```
+
+## 16.5.4 Exercises
+
+## 1. Use str_length() and str_sub() to extract the middle letter from each baby name. What will you do if the string has an even number of characters
+
+```{r}
+middle_letter <- babynames %>%
+  mutate(
+    middle = str_sub(name, ceiling(str_length(name) / 2), ceiling(str_length(name) / 2))
+  )
+```
+
+If it's even, choose the leftmost center letter. - Remember start index = 1 not 0, need ceiling not floor(int div)
+
+## 2. Are there any major trends in the length of babynames over time? 
+
+```{r}
+name_length <- babynames %>%
+  mutate (
+    name_length = str_length(name)
+  )
+```
+
+```{r}
+name_length_mean <- name_length %>%
+  group_by(year) %>%
+  summarise(year_mean = mean(name_length))
+```
+
+```{r}
+ggplot(data = name_length_mean, mapping = aes(x = year, y = year_mean)) + 
+  geom_point()
+```
+
+Yes, name length was rising steadily until about the 1990s, and then started to decrease again.
+
+## What about the popularity of first and last letters?
+
+```{r}
+letters <- babynames %>%
+  mutate (
+    first_letter = str_sub(name, 1, 1),
+    last_letter = str_sub(name, -1, -1)
+  )
+```
+
+```{r}
+letter_pop <- letters %>%
+  group_by(year) %>%
+  count(first_letter) %>%
+  arrange(desc(n)) %>%
+  slice(1:1)
+```
+
+```{r}
+ggplot(data = letter_pop, mapping = aes(x = year, y = n, color = first_letter)) + 
+  geom_point()
+```
+
+A is the most popular first letter in the 1800s and 200s, M was popular between 1920 and 1960, then D, then S.
+
+```{r}
+letter_pop_last <- letters %>%
+  group_by(year) %>%
+  count(last_letter) %>%
+  arrange(desc(n)) %>%
+  slice(1:1)
+```
+
+```{r}
+ggplot(data = letter_pop_last, mapping = aes(x = year, y = n, color = last_letter)) + 
+  geom_point()
+```
+e was the most popular last letter between 1880s and 1955ish, then a was the most popular name ending until recently where n overtook it in the most recent decade. 

@@ -1,0 +1,274 @@
+---
+title: "Class Analysis for LING 343"
+author: "Barb Ribeiro"
+date: 2023-03-30
+format: 
+  html:
+    embed-resources: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+here::i_am("homework-5-bribeiro33/analysis/class_analysis.qmd")
+library(here)
+library(tidyverse)
+```
+
+# Read in Data
+
+Create dataframes from the three rds files in the data folder. 
+```{r}
+df_compq <- read_rds(here("homework-5-bribeiro33/data", "df_compq.rds"))
+df_demo <- read_rds(here("homework-5-bribeiro33/data", "df_demo.rds"))
+df_sprt <- read_rds(here("homework-5-bribeiro33/data", "df_sprt.rds"))
+```
+
+# Examples of sample stimuli
+From McKoon and Love 2011:
+```{r}
+library(kableExtra)
+df_example_ml <- tibble::tribble(
+   ~condition, ~item, ~sentence,
+  "hit", 100L,  "The workmen banged the nails.",
+  "break", 100L, "The workmen chipped the tiles.",
+  "hit", 101L,    "The king slapped the rebel.",
+  "break", 101L,  "The king crushed the protest.",
+  "hit", 104L,  "The boys bit the candy.",
+  "break", 104L,  "The boys smashed the bottles."
+)
+df_example_ml|> kbl() |> kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+From Gennari and Poeppel 2003: 
+```{r}
+df_example_gp <- tibble::tribble(
+  ~condition, ~item,  ~sentence,
+  "event", 200L,          "The head librarian arranged a new weekly meeting.",
+  "state", 200L,          "The head librarian belonged to a union committee.",
+  "event", 201L, "The chief resident accused the nurse of being inefficient.",
+  "state", 201L,    "The chief resident regarded the nurse as a dear friend."
+  )
+df_example_gp|> kbl() |> kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+# Participant Accuracy Check
+
+For each participant, get percent accuracy for comprehension questions.
+```{r}
+df_acc <- df_compq %>%
+  group_by(iphash) %>%
+  summarize(accuraacy = sum(correct1 == 1) / n() * 100)
+```
+
+
+# Combine Stimuli Information
+
+Add the information about each stimulus sentence from the stimuli file to
+the self-paced reading data. They should have matching label variables.
+```{r}
+df_stimuli <- read_csv(here("homework-5-bribeiro33/stimuli", "stimuli-2023-eventive-repl-sprt.csv"))
+
+df_sprt <-  left_join(df_sprt, 
+                      select(df_stimuli, -sentence),
+                      join_by(label))
+```
+
+
+## Count Stimuli Per Condition
+
+The first condition column in the stimuli labels the experiment. For 
+the experiment labelled "gp", how many stimuli are there per condition?
+```{r}
+df_sti_cond <- df_stimuli %>%
+  filter(cond1 == "gp") %>%
+  group_by(cond2) %>%
+  count()
+```
+44 stimuli per condition
+
+How many stimuli are there per item?
+```{r}
+df_sti_item <- df_stimuli %>%
+  filter(cond1 == "gp") %>%
+  group_by(item) %>%
+  count()
+```
+2 stimuli per item
+
+Answer these questions for the "mklo" stimuli. 
+```{r}
+df_sti_cond_mklo <- df_stimuli %>%
+  filter(cond1 == "mklo") %>%
+  group_by(cond2) %>%
+  count()
+```
+12 stimuli per condition (way fewer than gp)
+
+How many stimuli are there per item?
+```{r}
+df_sti_item_mklo <- df_stimuli %>%
+  filter(cond1 == "mklo") %>%
+  group_by(item) %>%
+  count()
+```
+2 stimuli per item (exact same as gp)
+
+# McKoon and Love 2011 Replication
+
+The "mklo" stimuli are from the study McKoon and Love 2011. They found
+that result ("break") verbs had longer reaction times than manner ("hit") verbs.
+The verb is the third word in each sentence. Was their effect replicated in
+this experiment? Let's take some steps to see.
+
+McKoon, G., & Love, J. (2011). Verbs in the lexicon: Why is hitting easier than breaking? Language and Cognition, 3, 313–330. <https://doi.org/10.1515/LANGCOG.2011.011>
+
+
+## Summaries 
+
+For visualization and basic summary statistics, where participants are exposed 
+to repeated measures, we usually calculate averages for each participant first. 
+We want the average
+for each participant for each condition, so averaging "over" all of the items
+they saw in that condition. But remember we want to separate the times for each
+word, and we are mainly interested in the verb (word 3).
+```{r}
+df_sum <- df_sprt %>%
+  filter(cond1 == "mklo" & word_num %in% c("2", "3", "4")) %>%
+  group_by(iphash, cond2, word_num) %>%
+    summarize(
+      mean = mean(RT, na.rm=TRUE)
+    )
+```
+```{r}
+df_avg_overall <- df_sum %>%
+  group_by(iphash, cond2) %>%
+    summarize(
+      mean = mean(mean, na.rm=TRUE)
+    )
+```
+
+
+Then, we average those averages to get a condition mean. Did break verbs
+take longer than hit verbs?
+```{r}
+df_cond_mean <- df_avg_overall %>%
+  group_by(cond2) %>%
+  summarize(
+    mean = mean(mean, na.rm=TRUE)
+  )
+```
+Break verbs took 462.9620 ms on avg while hit verbs took 436.5148 ms on avg. That means that break verbs took (on avg) 
+26.4472 more ms than hit verbs.
+
+Try printing your output as a formatted table by piping the dataframe/tibble
+to the function `kableExtra::kbl()`. You may need to first install the
+package `{kableExtra}` from CRAN. 
+```{r}
+df_ml_tib <- df_cond_mean %>%
+  as_tibble()
+```
+```{r}
+df_ml_tib |> kbl() |> kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+## Plots
+
+Make a plot showing the means for both conditions for word 3. 
+```{r}
+df_sum %>%
+  filter(word_num == "3") %>%
+  group_by(cond2, word_num) %>%
+    summarize(
+      mean = mean(mean, na.rm=TRUE)
+    ) %>% 
+  ggplot(aes(x = cond2, y = mean))+
+  geom_point()
+```
+
+
+Now add words 2 and 4 also. Can you put them in one faceted plot?
+```{r}
+df_sum %>% 
+   group_by(cond2, word_num) %>%
+    summarize(
+      mean = mean(mean, na.rm=TRUE)
+    ) %>% 
+    ggplot(aes(x = cond2, y = mean))+
+    geom_point()+
+    facet_wrap(vars(word_num))
+```
+
+
+# Gennari and Poeppel 2003 Replication
+
+The "gp" stimuli are from the study Gennari and Poeppel 2003. They found 
+that eventive verbs had longer RTs than stative verbs. The verb is the fourth
+word in these sentences. Was their effect replicated? Try the same steps. 
+
+Gennari, S., & Poeppel, D. (2003). Processing correlates of lexical semantic complexity. Cognition, 89(1), B27–B41. <https://doi.org/10.1016/S0010-0277(03)00069-6>
+
+
+## Summaries
+```{r}
+df_sum_gp <- df_sprt %>%
+  filter(cond1 == "gp" & word_num == "4") %>%
+  group_by(iphash, cond2, word_num) %>%
+    summarize(
+      mean = mean(RT, na.rm=TRUE)
+    )
+```
+```{r}
+df_avg_overall_gp <- df_sum_gp %>%
+  group_by(iphash, cond2) %>%
+    summarize(
+      mean = mean(mean, na.rm=TRUE)
+    )
+```
+Then, we average those averages to get a condition mean. Did break verbs
+take longer than hit verbs?
+```{r}
+df_cond_mean_gp <- df_avg_overall_gp %>%
+  group_by(cond2) %>%
+  summarize(
+    mean = mean(mean, na.rm=TRUE)
+  )
+```
+Event verbs took 524.8665 ms on avg while state verbs took 532.6335 ms on avg. That means that state verbs took (on avg) 7.767 more ms than event verbs. 
+
+
+Try printing your output as a formatted table by piping the dataframe/tibble
+to the function `kableExtra::kbl()`. You may need to first install the
+package `{kableExtra}` from CRAN. 
+```{r}
+df_gp_tib <- df_cond_mean_gp %>%
+  as_tibble()
+```
+```{r}
+df_gp_tib |> kbl() |> kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Plots
+A plot showing the means for both conditions for word 4. 
+```{r}
+df_sum_gp %>%
+  filter(word_num == "4") %>%
+  group_by(cond2, word_num) %>%
+    summarize(
+      mean = mean(mean, na.rm=TRUE)
+    ) %>% 
+  ggplot(aes(x = cond2, y = mean))+
+  geom_point()
+```
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,178 @@
+---
+title: "p12"
+author: "Barb Ribeiro"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## 1. Introduction
+```{r}
+library(tidytext)
+```
+
+## 2. TED Talk
+```{r}
+library(tidyverse)
+library(tidytext) # again??
+```
+ - talk_id: the identifier from the TED website for this particular talk
+- text: the text of this TED talk
+- speaker: the main or first listed speaker (some TED talks have more than one speaker)
+
+```{r}
+glimpse(ted_talks) ## says not found
+```
+These I just did on the website itself because I couldn't get ted_talks to load
+```{r}
+tidy_talks <- ted_talks %>% 
+  unnest_tokens(word, text)
+```
+```{r}
+ted_bigrams <- ted_talks %>% 
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+
+ted_bigrams
+```
+```{r}
+tidy_talks %>%
+  count(word, sort = TRUE)
+```
+```{r}
+tidy_talks %>%
+  anti_join(get_stopwords()) %>%
+  count(word, sort = TRUE)
+```
+```{r}
+tidy_talks %>%
+  anti_join(get_stopwords()) %>%
+  count(word, sort = TRUE) %>%
+  slice_max(n, n = 20) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col()
+```
+```{r}
+tidy_talks %>%
+  filter(speaker %in% c("Jane Goodall", "Temple Grandin")) %>%
+  # remove stop words
+  anti_join(get_stopwords()) %>%
+  # count with two arguments
+  count(speaker, word) %>%
+  group_by(word) %>%
+  filter(sum(n) > 10) %>%
+  ungroup() %>%
+  pivot_wider(names_from = "speaker", values_from = "n", values_fill = 0) 
+```
+```{r}
+library(ggrepel)
+
+tidy_talks %>%
+  filter(speaker %in% c("Jane Goodall", "Temple Grandin")) %>%
+  anti_join(get_stopwords()) %>%
+  count(speaker, word) %>%
+  group_by(word) %>%
+  filter(sum(n) > 10) %>%
+  ungroup() %>%
+  pivot_wider(names_from = "speaker", values_from = "n", values_fill = 0) %>%
+  ggplot(aes(`Jane Goodall`, `Temple Grandin`)) +
+  geom_abline(color = "gray50", size = 1.2, alpha = 0.8, lty = 2) +
+  # use the special ggrepel geom for nicer text plotting
+  geom_text_repel(aes(label = word)) +
+  coord_fixed()
+```
+
+## 3. Shakespeare
+```{r}
+library(gutenbergr)
+shakespeare_works <- gutenberg_works(author == "Shakespeare, William")
+```
+```{r}
+shakespeare_works %>%
+  count(genre)
+```
+```{r}
+shakespeare %>%
+  count(genre, title)
+```
+
+```{r}
+tidy_shakespeare <- shakespeare %>%
+  group_by(title) %>%
+  mutate(linenumber = row_number()) %>%
+  ungroup() %>%
+  unnest_tokens(word, text)
+
+tidy_shakespeare %>% 
+  # count to find out how many times each word is used
+  count(word, sort = TRUE)
+```
+and is neutral
+chocolate is in both dfs
+```{r}
+shakespeare_sentiment <- tidy_shakespeare %>%
+  # implement sentiment analysis with the "bing" lexicon
+  inner_join(get_sentiments("bing")) 
+
+shakespeare_sentiment %>%
+  # find how many positive/negative words each play has
+  count(title, sentiment)
+```
+```{r}
+sentiment_counts <- tidy_shakespeare %>%
+  # implement sentiment analysis using the "bing" lexicon
+  inner_join(get_sentiments("bing")) %>%
+  # count the number of words by title, genre, and sentiment
+  count(title, genre, sentiment)
+
+sentiment_counts %>%
+  group_by(title) %>%
+  # find the total number of words in each play
+  mutate(total = sum(n),
+         percent = n / total) %>%
+  # filter the results for only negative sentiment
+  filter(sentiment == "negative") %>%
+  arrange(percent)
+```
+```{r}
+word_counts <- tidy_shakespeare %>%
+  inner_join(get_sentiments("bing")) %>%
+  # count by word and sentiment
+  count(word, sentiment)
+
+top_words <- word_counts %>%
+  # group by sentiment
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n))
+
+ggplot(top_words, aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ sentiment, scales = "free")
+```
+wilt was misidentified
+```{r}
+tidy_shakespeare %>%
+  # implement sentiment analysis using "bing" lexicon
+  inner_join(get_sentiments("bing")) %>%
+  # count using four arguments
+  count(title, genre, index = linenumber %/% 70, sentiment)
+```
+```{r}
+tidy_shakespeare %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(title, genre, index = linenumber %/% 70, sentiment) %>%
+  # pivot sentiment and n wider
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>%
+  # use mutate to compute net sentiment
+  mutate(sentiment = positive - negative) %>%
+  # put index on x-axis, sentiment on y-axis, and map comedy/tragedy to fill
+  ggplot(aes(index, sentiment, fill = genre)) +
+  # make a bar chart with geom_col()
+  geom_col() +
+  # make small multiples for each title with facet_wrap()
+  facet_wrap(~ title, scales = "free_x")
+```
+
